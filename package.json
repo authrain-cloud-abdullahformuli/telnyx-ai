@@ -7,7 +7,7 @@
     "test:guides-api": "npx tsx --test tests/guides-api.test.ts"
   },
   "devDependencies": {
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.15"
   },
   "version": "1.0.0",
   "author": "Abdullah Formuli <authrainmedia@gmail.com>",
