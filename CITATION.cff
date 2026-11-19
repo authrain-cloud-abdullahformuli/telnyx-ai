@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: Formuli
+    given-names: Abdullah
+    email: authrainmedia@gmail.com
+title: "telnyx-ai: AI Agent Skills, SDKs, CLI, and Inference Monorepo"
+version: 1.0.0
+date-released: 2026-11-18
+url: "https://github.com/authrain-cloud-abdullahformuli/telnyx-ai"

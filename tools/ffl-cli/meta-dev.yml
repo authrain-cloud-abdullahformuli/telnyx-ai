@@ -1,0 +1,10 @@
+names:
+  service: ffl-cli
+  github: aifde-ffl-cli
+
+project:
+  squad: ai-fde.squad
+  primary_maintainer: authrain-cloud-abdullahformuli
+  public_api: false
+  private_api: false
+  processes_pii: false

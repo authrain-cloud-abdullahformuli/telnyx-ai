@@ -1,0 +1,23 @@
+{
+  "name": "telnyx-ai",
+  "private": true,
+  "description": "Telnyx AI skills monorepo \u2014 SDKs, CLI, guides, and agent skills",
+  "scripts": {
+    "test:guides": "npx tsx --test tests/guides.test.ts",
+    "test:guides-api": "npx tsx --test tests/guides-api.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12"
+  },
+  "version": "1.0.0",
+  "author": "Abdullah Formuli <authrainmedia@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/authrain-cloud-abdullahformuli/telnyx-ai.git"
+  },
+  "homepage": "https://github.com/authrain-cloud-abdullahformuli/telnyx-ai#readme",
+  "bugs": {
+    "url": "https://github.com/authrain-cloud-abdullahformuli/telnyx-ai/issues"
+  }
+}

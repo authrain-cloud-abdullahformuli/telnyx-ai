@@ -1,0 +1,260 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_write_tests:
+        description: 'Run write tests (creates and cleans up real resources)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  skills-sync-check:
+    name: Check — Skills in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify provider skill directories match source
+        run: ./scripts/check-skills-sync.sh
+
+  skill-count-check:
+    name: Check — Skill-count markers current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify SKILL_COUNT markers match on-disk count
+        run: ./scripts/check-skill-count.sh
+
+  cli-syntax-check:
+    name: Check — No deprecated CLI command syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify docs and manifests use telnyx-agent / Go telnyx CLI syntax
+        run: ./scripts/check-cli-syntax.sh
+
+  unit-tests:
+    name: Unit Tests (no API key)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Python unit tests
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install Python deps
+        working-directory: tools/python
+        run: pip install -e ".[dev]"
+      - name: Python unit tests (core, no storage SDK)
+        working-directory: tools/python
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('boto3') is None"
+          pytest --ignore=tests/test_integration.py --ignore=tests/test_integration_ci.py --ignore=tests/test_e2e_telemetry.py -v
+      - name: Python optional storage SDK contracts (offline)
+        working-directory: tools/python
+        run: |
+          pip install -e ".[storage]"
+          python -c "import boto3"
+          pytest tests/test_s3_storage.py tests/test_s3_sdk.py -v
+
+      # TypeScript compilation
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install TS SDK deps
+        working-directory: tools/typescript
+        run: npm ci
+      - name: TypeScript SDK compilation
+        working-directory: tools/typescript
+        run: npx tsc --noEmit
+      - name: TypeScript adapter contract tests
+        working-directory: tools/typescript
+        run: npx tsx tests/rcs-call-control.test.ts && npx tsx tests/adapter-anyof.test.ts && npx tsx tests/object-payloads.test.ts && npx tsx tests/compositions.test.ts && npx tsx tests/s3-storage.test.ts && npx tsx tests/s3-sdk.test.ts
+      - name: TypeScript installed optional adapter tests
+        working-directory: tools/typescript
+        run: node tests/optional-adapters.test.mjs
+      - name: Install CLI deps
+        working-directory: cli
+        run: npm ci
+      - name: CLI compilation
+        working-directory: cli
+        run: npx tsc --noEmit
+      - name: CLI unit tests
+        working-directory: cli
+        run: npm test
+
+      # Cross-package parity
+      - name: Cross-package definition parity (all schema fields)
+        working-directory: tools/typescript
+        run: npm run test:parity
+
+      # Guide structural tests
+      - name: Guide structural tests
+        run: npx tsx --test tests/guides.test.ts
+
+  toolkit-runtime:
+    name: Toolkit runtime (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.20.2', '22']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install, build and run offline toolkit contracts
+        working-directory: tools/typescript
+        run: |
+          npm ci --engine-strict
+          npm run build
+          npm test
+          sh tests/packed-runtime.sh
+
+  toolkit-unsupported-runtime:
+    name: Toolkit rejects Node 18
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '18'
+      - name: Verify engine-strict rejects the packed toolkit
+        working-directory: tools/typescript
+        run: |
+          fixture=$(mktemp -d)
+          tarball=$(npm pack --pack-destination "$fixture" --silent)
+          cd "$fixture"
+          npm init -y
+          if npm install --engine-strict --omit=optional --ignore-scripts --no-audit --no-fund "$fixture/$tarball" > install.log 2>&1; then
+            cat install.log
+            exit 1
+          fi
+          cat install.log
+          grep -q 'EBADENGINE' install.log
+          grep -q '@telnyx/agent-toolkit' install.log
+
+  api-readonly:
+    name: API Read-Only Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Python read-only
+      - name: Install Python deps
+        working-directory: tools/python
+        run: pip install -e ".[dev]"
+      - name: Python API read-only tests
+        working-directory: tools/python
+        run: pytest tests/test_integration_ci.py -v -k "readonly"
+
+      # TS SDK read-only
+      - name: Install TS SDK deps
+        working-directory: tools/typescript
+        run: npm ci
+      - name: TS SDK API read-only tests
+        working-directory: tools/typescript
+        run: npx tsx tests/integration-ci.test.ts
+
+      # Install Go CLI (telnyx-cli)
+      - name: Install telnyx CLI (Go)
+        run: |
+          curl -fsSL -o /tmp/telnyx.tar.gz https://github.com/team-telnyx/telnyx-cli/releases/download/v0.11.0/telnyx_0.11.0_linux_amd64.tar.gz
+          tar -xzf /tmp/telnyx.tar.gz -C /usr/local/bin telnyx
+          chmod +x /usr/local/bin/telnyx
+          telnyx --version
+
+      # CLI read-only
+      - name: Install CLI deps
+        working-directory: cli
+        run: npm ci
+      - name: CLI read-only tests
+        working-directory: cli
+        run: npx tsx tests/integration-ci.test.ts
+
+      # Guide API smoke tests
+      - name: Guide API smoke tests
+        run: npx tsx --test tests/guides-api.test.ts
+        env:
+          TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+
+  api-write:
+    name: API Write + Cleanup Tests (Telnyx network)
+    runs-on: telnyx-2xsmall
+    needs: api-readonly
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_write_tests == 'true')
+    env:
+      TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+      RUN_WRITE_TESTS: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Python write tests
+      - name: Install Python deps
+        working-directory: tools/python
+        run: pip install -e ".[dev]"
+      - name: Python API write tests
+        continue-on-error: true
+        working-directory: tools/python
+        run: pytest tests/test_integration_ci.py -v -k "write"
+
+      # TS SDK write tests
+      - name: Install TS SDK deps
+        working-directory: tools/typescript
+        run: npm ci
+      - name: TS SDK write tests
+        continue-on-error: true
+        working-directory: tools/typescript
+        run: RUN_WRITE_TESTS=true npx tsx tests/integration-ci.test.ts
+
+      # Install Go CLI (telnyx-cli)
+      - name: Install telnyx CLI (Go)
+        run: |
+          curl -fsSL -o /tmp/telnyx.tar.gz https://github.com/team-telnyx/telnyx-cli/releases/download/v0.11.0/telnyx_0.11.0_linux_amd64.tar.gz
+          tar -xzf /tmp/telnyx.tar.gz -C /usr/local/bin telnyx
+          chmod +x /usr/local/bin/telnyx
+          telnyx --version
+
+      # CLI write tests
+      - name: Install CLI deps
+        working-directory: cli
+        run: npm ci
+      - name: CLI write tests
+        continue-on-error: true
+        working-directory: cli
+        run: RUN_WRITE_TESTS=true npx tsx tests/integration-ci-write.test.ts
+
+
